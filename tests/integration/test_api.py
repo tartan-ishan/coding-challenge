@@ -1,5 +1,8 @@
 """
-Integration tests — hit the real OpenAI API.
+Integration tests — no real OpenAI calls required.
+
+All LLM and embedding calls are mocked so these tests run offline,
+without OPENAI_API_KEY, and with deterministic responses.
 
 By default, uses the fixture files in tests/fixtures/.
 Override with environment variables:
@@ -9,6 +12,7 @@ Override with environment variables:
 import json
 import os
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -35,6 +39,27 @@ def _content_type(path: Path) -> str:
     return "application/json"
 
 
+def _make_fake_retriever():
+    """Return a mock retriever that returns a fixed document for any query."""
+    from langchain_core.documents import Document
+
+    doc = Document(page_content="Mocked document content relevant to the question.")
+    mock = MagicMock()
+    mock.ainvoke = AsyncMock(return_value=[doc])
+    mock.invoke = MagicMock(return_value=[doc])
+    return mock
+
+
+def _make_fake_llm(answer: str = "Mocked answer from document context"):
+    """Return a mock ChatOpenAI that returns a fixed answer."""
+    mock = MagicMock()
+    response = MagicMock()
+    response.content = answer
+    response.usage_metadata = {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
+    mock.ainvoke = AsyncMock(return_value=response)
+    return mock
+
+
 @pytest.fixture(scope="module")
 def client():
     return TestClient(app)
@@ -45,7 +70,14 @@ def qa_response(client):
     doc_path = _get_document_path()
     q_path = _get_questions_path()
 
-    with open(doc_path, "rb") as doc_f, open(q_path, "rb") as q_f:
+    fake_llm = _make_fake_llm()
+
+    with (
+        patch("app.api.routes.build_retriever", return_value=_make_fake_retriever()),
+        patch("app.services.qa_service._get_llm", return_value=fake_llm),
+        open(doc_path, "rb") as doc_f,
+        open(q_path, "rb") as q_f,
+    ):
         response = client.post(
             "/api/v1/qa",
             files={
@@ -83,10 +115,8 @@ class TestQAEndpoint:
     def test_answers_not_empty(self, qa_response):
         # At least one answer is a real response, not the fallback "Data Not Available"
         answers = qa_response.json()["answers"]
-        # At least one question should have a real answer (not "Data Not Available")
-        # since our sample doc covers the sample questions
         non_empty = [a for a in answers.values() if a != "Data Not Available"]
-        assert len(non_empty) > 0, "All answers were 'Data Not Available' — check fixture data"
+        assert len(non_empty) > 0, "All answers were 'Data Not Available' — check fixture data or mocks"
 
 
 class TestQAEndpointValidation:
