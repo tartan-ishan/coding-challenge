@@ -103,7 +103,7 @@ submitBtn.addEventListener('click', async () => {
     const data = await res.json();
 
     if (!res.ok) {
-      const msg = data.detail || `Server error ${res.status}`;
+      const msg = friendlyError(data.detail, res.status);
       outputBody.innerHTML = `<div class="banner error">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
         ${escHtml(msg)}
@@ -146,6 +146,27 @@ submitBtn.addEventListener('click', async () => {
 });
 
 // ── Helpers ───────────────────────────────────────────
+const ERROR_MESSAGES = {
+  UNSUPPORTED_DOCUMENT_TYPE:  'Please upload a PDF or JSON file as your document.',
+  UNSUPPORTED_QUESTIONS_TYPE: 'Please upload a JSON file for your questions.',
+  DOCUMENT_TOO_LARGE:         'Your document is too large. Please upload a file under 20 MB.',
+  QUESTIONS_FILE_TOO_LARGE:   'Your questions file is too large. Please keep it under 100 KB.',
+  INVALID_DOCUMENT:           'The document could not be read. Check that it is a valid, non-empty PDF or JSON file.',
+  INVALID_QUESTIONS:          'The questions file could not be read. It must be a JSON array of strings.',
+  TOO_MANY_QUESTIONS:         'Too many questions submitted. Please reduce the number of questions and try again.',
+  RETRIEVER_BUILD_FAILED:     'Something went wrong while processing your document. Please try again.',
+  AI_SERVICE_ERROR:           'The AI service is temporarily unavailable. Please wait a moment and try again.',
+};
+
+function friendlyError(detail, httpStatus) {
+  if (detail && typeof detail === 'object') {
+    return ERROR_MESSAGES[detail.error_code] || detail.message || `Unexpected error (${httpStatus}).`;
+  }
+  // Plain string detail (e.g. FastAPI validation errors before our handler runs)
+  if (typeof detail === 'string') return detail;
+  return `Something went wrong (${httpStatus}). Please try again.`;
+}
+
 function escHtml(str) {
   return String(str)
     .replace(/&/g, '&amp;')
