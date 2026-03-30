@@ -115,6 +115,45 @@ Structured JSON logs are written to stdout and `logs/app.log` (rotating, 30-day 
 
 ---
 
+## Evaluation
+
+`scripts/eval.py` runs an LLM-as-judge evaluation against a golden dataset. It requires `OPENAI_API_KEY`.
+
+```bash
+# Run against the default SOC 2 document and golden dataset
+uv run python scripts/eval.py
+
+# Run against a custom document and golden dataset
+uv run python scripts/eval.py \
+  --document sample_docs/soc2-type2.pdf \
+  --golden   sample_docs/golden_dataset.json
+```
+
+**How it works:**
+
+1. Loads and chunks the document, builds the retriever, and answers all questions in the golden dataset using the full RAG pipeline.
+2. For each Q/A pair, an LLM judge scores the system answer against the ideal answer on three axes (1–10):
+   - **Completeness** — does it cover the key facts from the ideal answer?
+   - **Accuracy** — are all stated claims factually correct per the ideal?
+   - **Phrasing** — does it handle partial information gracefully (stating what is and isn't documented) rather than refusing outright?
+3. Prints per-question results with scores and one-line reasoning, then a summary.
+4. Saves full results (scores + reasoning) to `sample_docs/eval_results.json`.
+5. Exits `0` if the overall average score across all axes and questions is ≥ 5/10, else `1`.
+
+**Golden dataset format** (`sample_docs/golden_dataset.json`):
+```json
+[
+  {
+    "question": "What cloud providers are used?",
+    "ideal_answer": "AWS and GCP are used as cloud providers."
+  }
+]
+```
+
+Entries without an `ideal_answer` are skipped. This lets you include exploratory questions in the dataset without blocking the eval.
+
+---
+
 ## Design tradeoffs
 
 ### Chunking
