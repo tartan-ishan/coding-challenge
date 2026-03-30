@@ -20,6 +20,7 @@ IRRELEVANT_DOC = Document(page_content="x")  # short/noisy — still returned by
 class TestAnswerSingle:
     @pytest.mark.asyncio
     async def test_returns_data_not_available_when_no_chunks(self):
+        # Returns "Data Not Available" when the retriever finds no relevant chunks
         retriever = _make_retriever([])
         with patch("app.services.qa_service._decompose_question", new=AsyncMock(return_value=["Q?"])):
             result = await _answer_single("What is X?", retriever)
@@ -27,6 +28,7 @@ class TestAnswerSingle:
 
     @pytest.mark.asyncio
     async def test_calls_llm_when_chunks_retrieved(self):
+        # Returns the LLM's answer when relevant chunks are found
         retriever = _make_retriever([HIGH_SCORE_DOC])
         with (
             patch("app.services.qa_service._decompose_question", new=AsyncMock(return_value=["Q?"])),
@@ -37,6 +39,7 @@ class TestAnswerSingle:
 
     @pytest.mark.asyncio
     async def test_deduplicates_chunks_across_sub_queries(self):
+        # Passes each unique chunk to the LLM only once even if multiple sub-queries return it
         duplicate_doc = Document(page_content="same content")
         retriever = MagicMock()
         # Both sub-queries return the same doc
@@ -56,6 +59,7 @@ class TestAnswerSingle:
 class TestAnswerQuestions:
     @pytest.mark.asyncio
     async def test_returns_dict_keyed_by_question(self):
+        # Result dict has exactly the same keys as the input question list
         retriever = _make_retriever([HIGH_SCORE_DOC])
         questions = ["Q1?", "Q2?"]
         with (
@@ -67,6 +71,7 @@ class TestAnswerQuestions:
 
     @pytest.mark.asyncio
     async def test_concurrent_execution(self):
+        # All questions are answered even when run concurrently
         retriever = _make_retriever([HIGH_SCORE_DOC])
         questions = [f"Question {i}?" for i in range(5)]
         with (
@@ -80,6 +85,7 @@ class TestAnswerQuestions:
 class TestDecomposeQuestion:
     @pytest.mark.asyncio
     async def test_falls_back_to_original_on_failure(self):
+        # Returns the original question when the LLM call raises an exception
         from app.services.qa_service import _decompose_question
 
         with patch("app.services.qa_service._get_llm") as mock_llm_fn:
@@ -93,6 +99,7 @@ class TestDecomposeQuestion:
 
     @pytest.mark.asyncio
     async def test_always_includes_original_question(self):
+        # Appends the original question to the sub-queries even on success
         from app.services.qa_service import _decompose_question
 
         with patch("app.services.qa_service._get_llm") as mock_llm_fn:

@@ -58,25 +58,30 @@ def qa_response(client):
 
 class TestQAEndpoint:
     def test_status_200(self, qa_response):
+        # A valid document and questions file returns HTTP 200
         assert qa_response.status_code == 200, qa_response.text
 
     def test_response_is_json(self, qa_response):
+        # Response body contains an "answers" key
         data = qa_response.json()
         assert "answers" in data
 
     def test_all_questions_answered(self, qa_response):
+        # Every question in the input file has a corresponding key in the answers dict
         q_path = _get_questions_path()
         questions = json.loads(q_path.read_bytes())
         answers = qa_response.json()["answers"]
         assert set(answers.keys()) == set(questions)
 
     def test_answers_are_strings(self, qa_response):
+        # Each answer value is a non-empty string
         answers = qa_response.json()["answers"]
         for q, a in answers.items():
             assert isinstance(a, str), f"Answer for '{q}' is not a string"
             assert len(a) > 0, f"Answer for '{q}' is empty"
 
     def test_answers_not_empty(self, qa_response):
+        # At least one answer is a real response, not the fallback "Data Not Available"
         answers = qa_response.json()["answers"]
         # At least one question should have a real answer (not "Data Not Available")
         # since our sample doc covers the sample questions
@@ -86,6 +91,7 @@ class TestQAEndpoint:
 
 class TestQAEndpointValidation:
     def test_unsupported_document_type(self, client):
+        # Uploading a non-PDF/JSON document returns 415 with an appropriate error message
         response = client.post(
             "/api/v1/qa",
             files={
@@ -94,9 +100,10 @@ class TestQAEndpointValidation:
             },
         )
         assert response.status_code == 415
-        assert "Unsupported document type" in response.json()["detail"]
+        assert "Unsupported document type" in response.json()["detail"]["message"]
 
     def test_invalid_questions_type(self, client):
+        # Uploading a non-JSON questions file returns 415 with an appropriate error message
         response = client.post(
             "/api/v1/qa",
             files={
@@ -105,9 +112,10 @@ class TestQAEndpointValidation:
             },
         )
         assert response.status_code == 415
-        assert "Questions file must be JSON" in response.json()["detail"]
+        assert "Questions file must be JSON" in response.json()["detail"]["message"]
 
     def test_malformed_questions_json(self, client):
+        # A questions file with invalid JSON returns 422
         response = client.post(
             "/api/v1/qa",
             files={
@@ -118,6 +126,7 @@ class TestQAEndpointValidation:
         assert response.status_code == 422
 
     def test_questions_not_array(self, client):
+        # A questions file containing a JSON object instead of an array returns 422
         response = client.post(
             "/api/v1/qa",
             files={
