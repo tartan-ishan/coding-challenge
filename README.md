@@ -150,7 +150,7 @@ uv run python scripts/eval.py \
 2. For each Q/A pair, an LLM judge scores the system answer against the ideal answer on three axes (1–10):
    - **Completeness** — does it cover the key facts from the ideal answer?
    - **Accuracy** — are all stated claims factually correct per the ideal?
-   - **Phrasing** — is the answer clear and concise? Key facts should be delivered directly with gaps noted inline; concise answers that cover the facts score as well as or better than longer ones.
+   - **Phrasing** — is the answer clearly expressed, coherent, and well-structured? The judge evaluates tone, organisation, and style consistency with the reference answer.
 3. Prints per-question results with scores and one-line reasoning, then a summary.
 4. Saves full results (scores + reasoning) to `sample_docs/eval_results.json`.
 5. Exits `0` if the overall average score across all axes and questions is ≥ 5/10, else `1`.
