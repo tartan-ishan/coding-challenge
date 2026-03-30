@@ -135,7 +135,7 @@ uv run python scripts/eval.py \
 2. For each Q/A pair, an LLM judge scores the system answer against the ideal answer on three axes (1–10):
    - **Completeness** — does it cover the key facts from the ideal answer?
    - **Accuracy** — are all stated claims factually correct per the ideal?
-   - **Phrasing** — does it handle partial information gracefully (stating what is and isn't documented) rather than refusing outright?
+   - **Phrasing** — is the answer clear and concise? Key facts should be delivered directly with gaps noted inline; concise answers that cover the facts score as well as or better than longer ones.
 3. Prints per-question results with scores and one-line reasoning, then a summary.
 4. Saves full results (scores + reasoning) to `sample_docs/eval_results.json`.
 5. Exits `0` if the overall average score across all axes and questions is ≥ 5/10, else `1`.
@@ -188,7 +188,13 @@ Entries without an `ideal_answer` are skipped. This lets you include exploratory
 
 **Anti-hallucination prompt design:** The prompt explicitly prohibits outside knowledge, requires bridging document vocabulary to question vocabulary, and mandates `"Data Not Available"` only when context is genuinely empty. This reduces hallucination but also means the model may be overly conservative on questions where the answer is inferable but not stated verbatim.
 
-**Per-question exception isolation:** `asyncio.gather` collects exceptions rather than raising immediately. A single failing question returns `"Data Not Available"` without aborting the batch. The tradeoff is that silent failures are harder to detect — they look identical to genuine "not found" answers. Token usage and latency for each LLM call are logged to help distinguish the two.
+**Chain-of-thought via `stepwise_reasoning`:** Asking the model to articulate its reasoning steps before committing to an answer is a form of chain-of-thought prompting. This measurably improves answer quality on multi-hop questions — the model is less likely to shortcut to a wrong answer when it must produce an auditable reasoning trace. The cost is ~10–20% more output tokens per call, translating directly to increased latency and API cost.
+
+**`confidence`:** A self-reported scalar (0–1). Self-assessed confidence is not perfectly calibrated — models tend to be overconfident on plausible-sounding answers and underconfident when the phrasing differs from the question vocabulary. Its value is relative rather than absolute: a 0.5 answer deserves more scrutiny than a 0.9 answer from the same model on the same document, even if the scores don't map to true probabilities. A better-calibrated signal could be derived from retrieval score distributions, but that adds significant complexity.
+
+**Latency impact:** Structured output adds two sources of latency over a plain-text call: the additional output tokens (reasoning + citations) and the overhead of OpenAI's function-calling parsing path. In practice the reasoning and citation fields are the dominant factor. For latency-sensitive applications, `stepwise_reasoning` could be omitted or generated only on low-confidence answers.
+
+**Schema rigidity:** `.with_structured_output()` enforces the schema at the API level — the model cannot return a malformed response without triggering a retryable error. This is more robust than post-hoc JSON parsing (the previous approach for keyword expansion) but means schema changes require a model re-call if the first attempt predates the change.
 
 ---
 
