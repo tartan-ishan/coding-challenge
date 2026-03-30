@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langchain_core.documents import Document
 
+from app.models.schemas import StructuredAnswer
 from app.services.qa_service import answer_questions, _answer_single
 
 
@@ -11,6 +12,10 @@ def _make_retriever(docs: list[Document]):
     retriever = MagicMock()
     retriever.ainvoke = AsyncMock(return_value=docs)
     return retriever
+
+
+def _make_structured_answer(answer: str = "some answer") -> StructuredAnswer:
+    return StructuredAnswer(answer=answer, stepwise_reasoning=[], confidence=0.9, citations=[])
 
 
 HIGH_SCORE_DOC = Document(page_content="AWS and GCP are used as cloud providers.")
@@ -24,7 +29,7 @@ class TestAnswerSingle:
         retriever = _make_retriever([])
         with patch("app.services.qa_service._decompose_question", new=AsyncMock(return_value=["Q?"])):
             result = await _answer_single("What is X?", retriever)
-        assert result == "Data Not Available"
+        assert result.answer == "Data Not Available"
 
     @pytest.mark.asyncio
     async def test_calls_llm_when_chunks_retrieved(self):
@@ -32,10 +37,10 @@ class TestAnswerSingle:
         retriever = _make_retriever([HIGH_SCORE_DOC])
         with (
             patch("app.services.qa_service._decompose_question", new=AsyncMock(return_value=["Q?"])),
-            patch("app.services.qa_service._call_llm", new=AsyncMock(return_value="AWS and GCP")),
+            patch("app.services.qa_service._call_llm", new=AsyncMock(return_value=_make_structured_answer("AWS and GCP"))),
         ):
             result = await _answer_single("Which cloud providers?", retriever)
-        assert result == "AWS and GCP"
+        assert result.answer == "AWS and GCP"
 
     @pytest.mark.asyncio
     async def test_deduplicates_chunks_across_sub_queries(self):
@@ -47,7 +52,7 @@ class TestAnswerSingle:
 
         with (
             patch("app.services.qa_service._decompose_question", new=AsyncMock(return_value=["Q1?", "Q2?"])),
-            patch("app.services.qa_service._call_llm", new=AsyncMock(return_value="answer")) as mock_llm,
+            patch("app.services.qa_service._call_llm", new=AsyncMock(return_value=_make_structured_answer())) as mock_llm,
         ):
             await _answer_single("Question?", retriever)
 
@@ -64,7 +69,7 @@ class TestAnswerQuestions:
         questions = ["Q1?", "Q2?"]
         with (
             patch("app.services.qa_service._decompose_question", new=AsyncMock(return_value=["Q?"])),
-            patch("app.services.qa_service._call_llm", new=AsyncMock(return_value="some answer")),
+            patch("app.services.qa_service._call_llm", new=AsyncMock(return_value=_make_structured_answer())),
         ):
             result = await answer_questions(questions, retriever)
         assert set(result.keys()) == {"Q1?", "Q2?"}
@@ -76,7 +81,7 @@ class TestAnswerQuestions:
         questions = [f"Question {i}?" for i in range(5)]
         with (
             patch("app.services.qa_service._decompose_question", new=AsyncMock(return_value=["Q?"])),
-            patch("app.services.qa_service._call_llm", new=AsyncMock(return_value="answer")),
+            patch("app.services.qa_service._call_llm", new=AsyncMock(return_value=_make_structured_answer())),
         ):
             result = await answer_questions(questions, retriever)
         assert len(result) == 5

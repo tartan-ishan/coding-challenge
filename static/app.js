@@ -122,16 +122,57 @@ submitBtn.addEventListener('click', async () => {
       return;
     }
 
-    outputBody.innerHTML = `<div class="qa-list">${entries.map(([q, a], i) => `
+    outputBody.innerHTML = `<div class="qa-list">${entries.map(([q, a], i) => {
+      const answer = a.answer ?? a;
+      const isUnavailable = answer === 'Data Not Available';
+      const reasoning = a.stepwise_reasoning ?? [];
+      const citations = a.citations ?? [];
+      const confidence = a.confidence ?? null;
+
+      const confidencePct = confidence !== null ? Math.round(confidence * 100) : null;
+      const confidenceHtml = confidencePct !== null ? `
+        <span class="confidence-inline">
+          <span class="confidence-label">Confidence</span>
+          <span class="confidence-bar-wrap"><span class="confidence-bar" style="width:${confidencePct}%"></span></span>
+          <span class="confidence-pct">${confidencePct}%</span>
+        </span>` : '';
+
+      const reasoningDetails = reasoning.length ? `
+        <details class="qa-details">
+          <summary>Reasoning</summary>
+          <div class="qa-details-body">
+            <ol>${reasoning.map(s => `<li>${escHtml(s)}</li>`).join('')}</ol>
+          </div>
+        </details>` : '';
+
+      const citationsDetails = citations.length ? `
+        <details class="qa-details">
+          <summary>Citations</summary>
+          <div class="qa-details-body">
+            <ul>${citations.map(c => `<li>${escHtml(c)}</li>`).join('')}</ul>
+          </div>
+        </details>` : '';
+
+      const hasFooter = confidencePct !== null || reasoning.length || citations.length;
+      const footerHtml = hasFooter ? `
+        <div class="qa-footer">
+          ${reasoningDetails}
+          ${citationsDetails}
+          ${confidenceHtml}
+        </div>` : '';
+
+      return `
       <div class="qa-item">
         <div class="qa-question">
           <span class="q-badge">${i + 1}</span>
           ${escHtml(q)}
         </div>
-        <div class="qa-answer ${a === 'Data Not Available' ? 'unavailable' : ''}">
-          ${a === 'Data Not Available' ? escHtml(a) : renderMarkdown(a)}
+        <div class="qa-answer ${isUnavailable ? 'unavailable' : ''}">
+          ${isUnavailable ? escHtml(answer) : renderMarkdown(answer)}
         </div>
-      </div>`).join('')}
+        ${footerHtml}
+      </div>`;
+    }).join('')}
     </div>`;
 
   } catch (err) {

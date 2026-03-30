@@ -18,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.models.schemas import StructuredAnswer
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 
@@ -51,11 +52,21 @@ def _make_fake_retriever():
 
 
 def _make_fake_llm(answer: str = "Mocked answer from document context"):
-    """Return a mock ChatOpenAI that returns a fixed answer."""
+    """Return a mock ChatOpenAI that returns a fixed StructuredAnswer via with_structured_output."""
+    structured_answer = StructuredAnswer(
+        answer=answer,
+        stepwise_reasoning=["Step 1: found relevant context."],
+        confidence=0.9,
+        citations=["Mocked document content relevant to the question."],
+    )
+    structured_mock = MagicMock()
+    structured_mock.ainvoke = AsyncMock(return_value=structured_answer)
+
     mock = MagicMock()
+    mock.with_structured_output = MagicMock(return_value=structured_mock)
+    # also support plain ainvoke for decompose/keyword prompts
     response = MagicMock()
-    response.content = answer
-    response.usage_metadata = {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
+    response.content = "sub-query 1"
     mock.ainvoke = AsyncMock(return_value=response)
     return mock
 
@@ -105,17 +116,21 @@ class TestQAEndpoint:
         answers = qa_response.json()["answers"]
         assert set(answers.keys()) == set(questions)
 
-    def test_answers_are_strings(self, qa_response):
-        # Each answer value is a non-empty string
+    def test_answers_have_required_fields(self, qa_response):
+        # Each answer value is a StructuredAnswer object with the expected fields
         answers = qa_response.json()["answers"]
         for q, a in answers.items():
-            assert isinstance(a, str), f"Answer for '{q}' is not a string"
-            assert len(a) > 0, f"Answer for '{q}' is empty"
+            assert isinstance(a, dict), f"Answer for '{q}' is not an object"
+            assert "answer" in a, f"Answer for '{q}' missing 'answer' field"
+            assert "confidence" in a, f"Answer for '{q}' missing 'confidence' field"
+            assert "citations" in a, f"Answer for '{q}' missing 'citations' field"
+            assert "stepwise_reasoning" in a, f"Answer for '{q}' missing 'stepwise_reasoning' field"
+            assert len(a["answer"]) > 0, f"Answer text for '{q}' is empty"
 
     def test_answers_not_empty(self, qa_response):
         # At least one answer is a real response, not the fallback "Data Not Available"
         answers = qa_response.json()["answers"]
-        non_empty = [a for a in answers.values() if a != "Data Not Available"]
+        non_empty = [a for a in answers.values() if a["answer"] != "Data Not Available"]
         assert len(non_empty) > 0, "All answers were 'Data Not Available' — check fixture data or mocks"
 
 

@@ -4,8 +4,8 @@ LLM-as-judge evaluation script against a golden dataset.
 For each question the judge scores the system answer on three axes (1-10):
   - completeness : does it cover all parts the ideal answer covers?
   - accuracy     : is everything stated factually correct per the ideal?
-  - phrasing     : does it handle partial information gracefully
-                   (e.g. noting what's missing rather than refusing)?
+  - phrasing     : is the answer clear and concise — key facts delivered directly,
+                   gaps noted inline, no unnecessary padding?
 
 Usage:
     uv run python scripts/eval.py
@@ -64,19 +64,21 @@ CRITERIA = {
         "and the higher number if it is at the stronger end. Output only the integer."
     ),
     "phrasing": (
-        "Score how well the prediction handles partial information — stating what IS documented "
-        "and explicitly noting what is NOT specified, rather than refusing entirely. "
+        "Score the clarity and conciseness of the prediction. "
+        "A high-scoring answer delivers the key information directly and efficiently — "
+        "concise answers that cover the facts well are preferred over lengthy ones. "
+        "The reference answer shows what facts matter, NOT how long or detailed the answer should be. "
         "You MUST assign a score from the bands below — no other values are valid:\n"
-        "  1-2 — Refuses to answer ('Data Not Available') despite partial information existing, "
-        "OR answers with no caveats when key details are clearly missing.\n"
-        "  3-4 — Provides some content but appends a blanket 'Data Not Available' that contradicts "
-        "the partial content, or omits important per-topic caveats.\n"
-        "  5-6 — Acknowledges missing information but the caveat is vague or only stated once at the end "
-        "rather than per sub-topic.\n"
-        "  7-8 — Clearly states what is documented and notes per-topic what is not specified; "
-        "minor phrasing awkwardness only.\n"
-        "  9-10 — Direct opening, per-topic coverage, explicit statements of what sources do and do not "
-        "specify, no contradictory trailing 'Data Not Available'.\n"
+        "  1-2 — Refuses to answer or is so vague as to be unhelpful; or so verbose and repetitive "
+        "that the core answer is buried.\n"
+        "  3-4 — Answer is present but poorly structured, unnecessarily padded, or uses awkward phrasing "
+        "that obscures the key points.\n"
+        "  5-6 — Reasonably clear but either slightly overlong with minor padding, or missing a brief "
+        "acknowledgement of what the sources do not specify when that is relevant.\n"
+        "  7-8 — Clear and direct; covers what is documented and concisely notes any gaps; "
+        "no unnecessary filler.\n"
+        "  9-10 — Exceptionally concise and well-structured; every sentence earns its place; "
+        "gaps are noted inline without disrupting flow.\n"
         "Within each band, use the lower number if the prediction is at the weaker end of that description, "
         "and the higher number if it is at the stronger end. Output only the integer."
     ),
@@ -154,9 +156,10 @@ async def run_eval(document_path: Path, golden_path: Path) -> int:
     for entry in entries:
         q = entry["question"]
         ideal = entry["ideal_answer"]
-        system = answers[q]
+        structured = answers[q]
+        system_text = structured.answer
 
-        scores_for_q = await _judge_answer(evaluator_map, q, system, ideal)
+        scores_for_q = await _judge_answer(evaluator_map, q, system_text, ideal)
 
         numeric_scores = [
             v["score"] for v in scores_for_q.values() if v.get("score") is not None
@@ -167,7 +170,8 @@ async def run_eval(document_path: Path, golden_path: Path) -> int:
 
         result = {
             "question": q,
-            "system_answer": system,
+            "system_answer": system_text,
+            "system_confidence": structured.confidence,
             "ideal_answer": ideal,
             "scores": {
                 criterion: {
@@ -182,14 +186,14 @@ async def run_eval(document_path: Path, golden_path: Path) -> int:
         all_results.append(result)
 
         status = "✓ PASS" if passed else "✗ FAIL"
-        print(f"{status}  avg={avg:.1f}/10  |  {q[:80]}")
+        print(f"{status}  avg={avg:.1f}/10  confidence={structured.confidence:.2f}  |  {q[:80]}")
         for criterion, v in scores_for_q.items():
             score_str = str(v.get("score", "err"))
             reasoning = v.get("reasoning", "")
             # Print first sentence of reasoning only
             first_sentence = reasoning.split(".")[0].strip() if reasoning else ""
             print(f"    {criterion:14s} {score_str:>3}/10  {first_sentence[:80]}")
-        print(f"  System: {system[:180]}...")
+        print(f"  System: {system_text[:180]}...")
         print()
 
     # Save results
