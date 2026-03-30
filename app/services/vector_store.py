@@ -21,7 +21,6 @@ def build_retriever(documents: list[Document]) -> BaseRetriever:
     Results from both are fused via Reciprocal Rank Fusion (EnsembleRetriever).
 
     To switch to persistent Chroma: pass persist_directory to Chroma().
-    To switch to Pinecone: replace the Chroma retriever with a Pinecone-backed one.
     The EnsembleRetriever interface stays the same.
     """
     settings = get_settings()
