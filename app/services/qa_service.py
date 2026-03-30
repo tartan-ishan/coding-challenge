@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 
 import openai
 from langchain_core.documents import Document
@@ -7,15 +8,26 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.retrievers import BaseRetriever
 from langchain_openai import ChatOpenAI
 from tenacity import (
-    retry,
+    AsyncRetrying,
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
+    stop_after_delay,
+    stop_any,
 )
 
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+_SEMAPHORE: asyncio.Semaphore | None = None
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    global _SEMAPHORE
+    if _SEMAPHORE is None:
+        _SEMAPHORE = asyncio.Semaphore(get_settings().max_concurrent_questions)
+    return _SEMAPHORE
 
 # ---------------------------------------------------------------------------
 # Prompts
@@ -168,8 +180,15 @@ async def answer_questions(
 ) -> dict[str, str]:
     """Answer all questions concurrently against the hybrid retriever."""
     tasks = [_answer_single(q, retriever) for q in questions]
-    results = await asyncio.gather(*tasks)
-    return dict(zip(questions, results))
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    answers = {}
+    for question, result in zip(questions, results):
+        if isinstance(result, BaseException):
+            logger.error("Failed to answer question %r: %s", question[:60], result, exc_info=result)
+            answers[question] = "Data Not Available"
+        else:
+            answers[question] = result
+    return answers
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +196,11 @@ async def answer_questions(
 # ---------------------------------------------------------------------------
 
 async def _answer_single(question: str, retriever: BaseRetriever) -> str:
+    async with _get_semaphore():
+        return await _answer_single_impl(question, retriever)
+
+
+async def _answer_single_impl(question: str, retriever: BaseRetriever) -> str:
     settings = get_settings()
 
     # Step 1: decompose + keyword expand concurrently
@@ -249,32 +273,45 @@ async def _expand_keywords(question: str) -> list[str]:
     return []
 
 
-@retry(
-    retry=retry_if_exception_type(
-        (openai.RateLimitError, openai.APIStatusError)
-    ),
-    stop=stop_after_attempt(get_settings().max_retries),
-    wait=wait_exponential(
-        min=get_settings().retry_min_wait,
-        max=get_settings().retry_max_wait,
-    ),
-    reraise=True,
-)
 async def _call_llm(question: str, context: str) -> str:
-    try:
-        response = await _get_llm().ainvoke(
-            _ANSWER_PROMPT.format_messages(question=question, context=context)
-        )
-        return response.content.strip()
-    except openai.RateLimitError:
-        logger.warning("OpenAI rate limit hit, retrying...")
-        raise
-    except openai.APIStatusError as e:
-        logger.error("OpenAI API error: %s", e)
-        raise
-    except Exception as e:
-        logger.error("Unexpected LLM error: %s", e)
-        raise RuntimeError(f"LLM call failed: {e}") from e
+    settings = get_settings()
+    async for attempt in AsyncRetrying(
+        retry=retry_if_exception_type((openai.RateLimitError, openai.APIStatusError)),
+        stop=stop_any(
+            stop_after_attempt(settings.max_retries),
+            stop_after_delay(settings.llm_timeout_seconds),
+        ),
+        wait=wait_exponential(min=settings.retry_min_wait, max=settings.retry_max_wait),
+        reraise=True,
+    ):
+        with attempt:
+            try:
+                start = time.perf_counter()
+                response = await _get_llm().ainvoke(
+                    _ANSWER_PROMPT.format_messages(question=question, context=context)
+                )
+                latency_ms = round((time.perf_counter() - start) * 1000, 2)
+                usage = response.usage_metadata or {}
+                logger.info(
+                    "llm_call",
+                    extra={
+                        "latency_ms": latency_ms,
+                        "prompt_tokens": usage.get("input_tokens"),
+                        "completion_tokens": usage.get("output_tokens"),
+                        "total_tokens": usage.get("total_tokens"),
+                        "model": get_settings().openai_model,
+                    },
+                )
+                return response.content.strip()
+            except openai.RateLimitError:
+                logger.warning("OpenAI rate limit hit, retrying...")
+                raise
+            except openai.APIStatusError as e:
+                logger.error("OpenAI API error: %s", e)
+                raise
+            except Exception as e:
+                logger.error("Unexpected LLM error: %s", e)
+                raise RuntimeError(f"LLM call failed: {e}") from e
 
 
 def _get_llm() -> ChatOpenAI:

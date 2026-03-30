@@ -6,4 +6,5 @@ class QAResponse(BaseModel):
 
 
 class ErrorResponse(BaseModel):
-    detail: str
+    error_code: str
+    message: str
